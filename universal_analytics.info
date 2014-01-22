@@ -1,0 +1,4 @@
+name = Universal Analytics
+description = Universal tracking via Google Analytics from your code.
+core = 7.x
+package = Tracking

@@ -1,0 +1,178 @@
+<?php
+
+/**
+ * @file
+ * Universal tracking via Google Analytics from your code.
+ */
+
+/**
+ * Track a single action in an event to Google Analytics.
+ *
+ * @param string $action
+ *   The action to track on the event.
+ * @param string $event
+ *   (optional) The event to track on the ID. This can be set globally.
+ * @param string $tracking_id
+ *   (optional) The tracking ID to use. This can be set globally.
+ * @param string $client_id
+ *   (optional) The client ID to use. This can be set globally.
+ * @param array $parameters
+ *   (optional) A list of extra parameters to send to Google Analytics.
+ */
+function ua_track($action, $event = NULL, $tracking_id = NULL, $client_id = NULL, $parameters = array()) {
+  // Tracking URL.
+  $url = 'http://www.google-analytics.com/collect';
+
+  // Get the event if not present.
+  if (empty($event)) {
+    $event = variable_get('ua_event', '');
+  }
+
+  // Get the tracking ID if not present.
+  if (empty($tracking_id)) {
+    $tracking_id = variable_get('ua_tracking_id', '');
+  }
+
+  // Get the client ID if not present.
+  if (empty($client_id)) {
+    $client_id = variable_get('ua_client_id', '');
+  }
+
+  // Check to see if we have the three required variables.
+  if (empty($tracking_id) ||
+      empty($event) ||
+      empty($action)) {
+    watchdog(
+      'universal_analytics',
+      'Neither tracking_id, event, nor action can be empty!',
+      array(),
+      WATCHDOG_ERROR
+    );
+
+    return;
+  }
+
+  // Re-init the var as an array if it's not.
+  if (!is_array($parameters)) {
+    $parameters = array();
+  }
+
+  // Add the server name, if requested.
+  if (variable_get('ua_autotrack_server_name', TRUE) &&
+      array_key_exists('SERVER_NAME', $_SERVER) &&
+      !array_key_exists('dh', $parameters)) {
+    $parameters['dh'] = $_SERVER['SERVER_NAME'];
+  }
+
+  // Add the request URi, if requested.
+  if (variable_get('ua_autotrack_request_uri', TRUE) &&
+      array_key_exists('REQUEST_URI', $_SERVER) &&
+      !array_key_exists('dp', $parameters)) {
+    $parameters['dp'] = $_SERVER['REQUEST_URI'];
+  }
+
+  // Add the HTTP referer, if requested.
+  if (variable_get('ua_autotrack_http_referer', TRUE) &&
+      array_key_exists('HTTP_REFERER', $_SERVER) &&
+      !array_key_exists('dr', $parameters)) {
+    $parameters['dr'] = $_SERVER['HTTP_REFERER'];
+  }
+
+  // Set the main variables for the tracking.
+  $parameters['v'] = '1';
+  $parameters['t'] = 'event';
+  $parameters['ec'] = $event;
+  $parameters['ea'] = $action;
+  $parameters['tid'] = $tracking_id;
+  $parameters['cid'] = $client_id;
+
+  try {
+    // Initiate the cURL object.
+    $ch = curl_init();
+
+    // Set the base URL.
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+
+    // Add the user agent, if requested.
+    if (variable_get('ua_autotrack_http_user_agent', TRUE) &&
+        array_key_exists('HTTP_USER_AGENT', $_SERVER)) {
+      curl_setopt($ch, CURLOPT_USERAGENT, $_SERVER['HTTP_USER_AGENT']);
+    }
+
+    // Setup the POST variables and add them.
+    $queryString = http_build_query($parameters);
+
+    curl_setopt($ch, CURLOPT_POST, TRUE);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $queryString);
+
+    // Execute the call.
+    curl_exec($ch);
+
+    // Analyze the feedback.
+    if (substr(curl_getinfo($ch, CURLINFO_HTTP_CODE), 0, 1) != '2') {
+      watchdog(
+        'universal_analytics',
+        'HTTP status code is not 2XX. Something went wrong.',
+        array(
+          'url'        => $url,
+          'parameters' => $parameters,
+          'curl_info'  => curl_getinfo($ch),
+        ),
+        WATCHDOG_ERROR
+      );
+    }
+
+    // Close the connection.
+    curl_close($ch);
+  }
+  catch (Exception $e) {
+    watchdog(
+      'universal_analytics',
+      '%message',
+      array(
+        '%message' => $e->getMessage(),
+      ),
+      WATCHDOG_ERROR
+    );
+  }
+}
+
+/**
+ * Implements hook_init().
+ */
+function universal_analytics_init() {
+  if (variable_get('ua_auto_track', FALSE)) {
+    // Track a single page visit to Google Analytics with current request URi.
+    ua_track('pageview', (array_key_exists('REQUEST_URI', $_SERVER) ? $_SERVER['REQUEST_URI'] : 'visit'));
+  }
+}
+
+/**
+ * Implements hook_menu().
+ */
+function universal_analytics_menu() {
+  $items = array(
+    'admin/config/services/universal-analytics' => array(
+      'title'            => t('Universal Analytics'),
+      'description'      => t('Configure the Universal Analytics module.'),
+      'page callback'    => 'drupal_get_form',
+      'page arguments'   => array('universal_analytics_config'),
+      'access arguments' => array('administer universal_analytics'),
+      'file'             => 'universal_analytics.admin.inc',
+    ),
+  );
+
+  return $items;
+}
+
+function universal_analytics_permission() {
+  $permissions = array(
+    'administer universal_analytics' => array(
+      'title'       => t('Administer Universal Analytics'),
+      'description' => t('Access to configure the Universal Analytics module.'),
+    ),
+  );
+
+  return $permissions;
+}
